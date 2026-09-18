@@ -1,0 +1,14 @@
+# Backend (Go)
+backend/data/
+backend/squidadmin
+backend/squidadmin-backend
+backend/server
+backend/.env
+
+# Frontend (Node)
+frontend/node_modules/
+frontend/dist/
+
+# OS / editor
+.DS_Store
+*.swp

@@ -1,0 +1,15 @@
+[Unit]
+Description=Squid Admin Panel backend
+After=network.target squid.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/dior/Projects/Loyihalar/terminal/backend
+Environment=DB_PATH=/home/dior/Projects/Loyihalar/terminal/backend/data/squidadmin.db
+ExecStart=/home/dior/Projects/Loyihalar/terminal/backend/squidadmin-backend
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
