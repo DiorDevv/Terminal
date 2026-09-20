@@ -215,7 +215,7 @@ func addACL(p *Policy, name, typ string, args []string, line int, env PolicyEnv)
 		args = args[1:]
 	}
 
-	var vals []string
+	vals := []string{} // never nil: an empty list file must encode as [] not null
 	for _, a := range args {
 		if strings.HasPrefix(a, "#") {
 			break

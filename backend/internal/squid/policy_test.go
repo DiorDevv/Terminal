@@ -1,6 +1,7 @@
 package squid
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -529,5 +530,23 @@ http_access deny all
 		if err != nil || v.Decision != c.decision {
 			t.Errorf("%s: decision %q, want %q (%v)\n%s", c.name, v.Decision, c.decision, err, dump(v))
 		}
+	}
+}
+
+// An ACL fed from an empty (or unreadable) list file has no values. The panel's
+// page reads them as an array, so they must encode as [] and never as null.
+func TestEmptyACLValuesEncodeAsEmptyArray(t *testing.T) {
+	env := PolicyEnv{ReadFile: func(string) ([]byte, error) { return []byte("\n# nothing yet\n"), nil }}
+	p := ParsePolicy("acl blocked dstdomain \"/etc/squid/empty.txt\"\nhttp_access deny blocked\n", env)
+	a := p.ACLs["blocked"]
+	if a == nil {
+		t.Fatal("acl blocked not parsed")
+	}
+	out, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"args":[]`) {
+		t.Fatalf("empty list must encode as [], got %s", out)
 	}
 }

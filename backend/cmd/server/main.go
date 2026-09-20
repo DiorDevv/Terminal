@@ -26,12 +26,16 @@ import (
 	"squidadmin/backend/internal/db"
 	"squidadmin/backend/internal/monitor"
 	"squidadmin/backend/internal/squid"
+	"squidadmin/backend/internal/web"
 	"squidadmin/backend/internal/ws"
 )
 
 // legacyDefaultPassword is what earlier versions shipped as the built-in
 // admin password. Any account still using it is forced to pick a new one.
 const legacyDefaultPassword = "admin123"
+
+// version is stamped at build time (scripts/build.sh: -X main.version=...).
+var version = "dev"
 
 func main() {
 	if err := godotenv.Load(); err != nil {
@@ -147,6 +151,7 @@ func main() {
 		AccessHandler:       handlers.NewAccessHandler(accessMgr, squidMgr, squid.NewPolicyEnv(cfg.BlacklistACL)),
 		BlocklistsHandler:   handlers.NewBlocklistsHandler(blocklists, squidMgr),
 		MonitorHandler:      handlers.NewMonitorHandler(statsStore, ingestor, alerts, squidMgr, logDir, cfg.SquidManagerURL, disks),
+		Web:                 web.Handler(),
 		AllowedOrigins:      origins,
 		TrustedProxies:      splitList(cfg.TrustedProxies),
 	})
@@ -176,7 +181,7 @@ func main() {
 		}
 	}()
 
-	log.Printf("squidadmin backend listening on %s (allowed origins: %s)", srv.Addr, strings.Join(origins, ", "))
+	log.Printf("squidadmin %s listening on %s (extra allowed origins: %s)", version, srv.Addr, strings.Join(origins, ", "))
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server: %v", err)
 	}

@@ -32,6 +32,10 @@ type Deps struct {
 	MonitorHandler      *handlers.MonitorHandler
 	UserPolicyHandler   *handlers.UserPolicyHandler
 
+	// Web serves the built frontend for every path the API does not own. Nil
+	// (tests, or a separate frontend server) leaves those paths as plain 404s.
+	Web gin.HandlerFunc
+
 	// AllowedOrigins are the browser origins allowed to call the API.
 	AllowedOrigins []string
 	// TrustedProxies are the reverse proxies whose X-Forwarded-For is
@@ -48,6 +52,10 @@ func NewRouter(d Deps) *gin.Engine {
 	}
 
 	r.Use(SecurityHeaders(), LimitBody(MaxBodyBytes), CORS(d.AllowedOrigins), CSRF(d.AllowedOrigins))
+
+	if d.Web != nil {
+		r.NoRoute(d.Web)
+	}
 
 	r.GET("/api/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})

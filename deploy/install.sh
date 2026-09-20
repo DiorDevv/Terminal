@@ -13,11 +13,14 @@
 #   sudo ./deploy/install.sh --uninstall
 #
 # Options:
-#   --bin PATH        prebuilt backend binary (default: build it with `go build`)
+#   --bin PATH        prebuilt binary from scripts/build.sh (default: build it here, which
+#                     needs Go and Node.js; the server itself needs neither with --bin)
 #   --prefix DIR      install directory                       (default /opt/squidadmin)
 #   --user NAME       service account                         (default squidadmin)
 #   --port N          port the panel listens on               (default 8080)
-#   --origin URL      browser origin(s) allowed to call the API, comma separated
+#   --origin URL      extra browser origin(s) allowed to call the API, comma separated.
+#                     The panel serves its own interface, so the address you open it at
+#                     is always allowed; this is only for a separate frontend server
 #                                                              (default http://localhost:5173)
 #   --service NAME    systemd unit name of squid              (default squid)
 #   --unit NAME       name for the panel's own unit           (default squidadmin)
@@ -94,9 +97,15 @@ getent group "$SQUID_GROUP" >/dev/null || die "group '$SQUID_GROUP' (squid's gro
 mkdir -p "$PREFIX/bin"
 if [[ -z $BIN ]]; then
   ROOT=$(cd "$(dirname "$0")/.." && pwd)
-  command -v go >/dev/null || die "no --bin given and Go is not installed to build one"
-  log "building backend"
-  (cd "$ROOT/backend" && go build -buildvcs=false -o "$PREFIX/bin/squidadmin-backend" ./cmd/server)
+  # One binary that carries the web interface. The frontend is rebuilt only when
+  # it is missing or older than its sources (npm ci is slow), the backend always.
+  BUILD_ARGS=()
+  if [[ -f $ROOT/frontend/dist/index.html && -z $(find "$ROOT/frontend/src" "$ROOT/frontend/package.json" -newer "$ROOT/frontend/dist/index.html" -print -quit 2>/dev/null) ]]; then
+    BUILD_ARGS=(--skip-frontend)
+  fi
+  log "building the panel (backend + web interface)"
+  "$ROOT/scripts/build.sh" "${BUILD_ARGS[@]}"
+  install -m 0755 "$ROOT/bin/squidadmin-backend" "$PREFIX/bin/squidadmin-backend"
 else
   install -m 0755 "$BIN" "$PREFIX/bin/squidadmin-backend"
 fi

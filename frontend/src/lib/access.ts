@@ -179,7 +179,12 @@ export const decisionMeta: Record<string, { label: string; tone: string; text: s
   },
 };
 
-/** Escapes a plain keyword so it is safe inside a squid (POSIX) pattern. */
+/**
+ * Turns a plain keyword into a squid (POSIX extended) pattern that matches
+ * exactly that text. Every character with a meaning in a regular expression is
+ * escaped; without this a keyword such as "c++" or "a(b" produced a pattern
+ * squid rejects, and "a|b" silently matched "a" alone.
+ */
 export function keywordToPattern(word: string): string {
-  return word.replace(/[.]/g, "[.]");
+  return word.replace(/[.^$*+?()[\]{}|\\]/g, (ch) => (ch === "." ? "[.]" : "\\" + ch));
 }

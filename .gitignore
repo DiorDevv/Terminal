@@ -5,9 +5,18 @@ backend/squidadmin-backend
 backend/server
 backend/.env
 
+# Built frontend embedded into the binary by scripts/build.sh (only the placeholder is tracked)
+backend/internal/web/dist/*
+!backend/internal/web/dist/.gitkeep
+bin/
+
 # Frontend (Node)
 frontend/node_modules/
 frontend/dist/
+
+# Browser E2E: saved login and screenshots/traces of failed runs
+frontend/e2e/.auth/
+frontend/e2e/.results/
 
 # OS / editor
 .DS_Store

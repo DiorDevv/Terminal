@@ -1,0 +1,326 @@
+openapi: 3.0.3
+info:
+  title: Squid Admin API
+  version: "1.0"
+  description: |
+    The HTTP API behind the Squid Admin panel. The web interface is its only official client.
+
+    **Authentication.** `POST /auth/login` sets an HttpOnly session cookie (`squidadmin_session`). Every other
+    endpoint needs it, except `/health`.
+
+    **State-changing requests** (`POST`, `PUT`, `DELETE`) must carry the header `X-Requested-With: squidadmin`
+    (CSRF protection); an `Origin` header, if present, must be the panel's own origin or one listed in
+    `FRONTEND_ORIGIN`.
+
+    **Roles.** `x-role` on each operation is the lowest role allowed: `public` (no login), `any` (signed in),
+    `viewer` < `operator` < `admin`. A missing role answers `403`, no session `401`. This file is checked against
+    the real router by `backend/internal/api/openapi_test.go`: every route must be documented here, and no
+    operation may be more open than its `x-role` says.
+
+    **Changes that touch squid.conf** answer `{"status": ..., "reloaded": true}` when squid picked the change up,
+    or `"reloaded": false` with `reload_error` when the reload failed and the previous configuration was restored.
+    Rejected values answer `422` with `{"error": "...", "fields": {...}}` (`fields` when several inputs are wrong).
+
+    Request and response bodies are described for the newer endpoints; the older ones are documented by
+    their summaries and are exercised by the tests in `backend/internal/api`.
+servers:
+  - url: /api
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: squidadmin_session
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        fields: { type: object, additionalProperties: { type: string } }
+    ReloadResult:
+      type: object
+      properties:
+        status: { type: string }
+        reloaded: { type: boolean, description: "Present when squid.conf changed" }
+        reload_error: { type: string }
+        warning: { type: string }
+    ProxyUser:
+      type: object
+      properties:
+        username: { type: string }
+        disabled: { type: boolean }
+        expires_at: { type: integer, description: "Unix seconds, 0 = never" }
+        daily_quota_mb: { type: integer, description: "0 = unlimited" }
+        note: { type: string }
+        groups: { type: array, items: { type: object, properties: { id: { type: integer }, name: { type: string } } } }
+        used_today: { type: integer, description: "Bytes" }
+        status: { type: string, enum: [active, disabled, expired, quota_exceeded] }
+    UserPatch:
+      type: object
+      description: Only the fields present are changed.
+      properties:
+        disabled: { type: boolean }
+        expires_at: { type: integer }
+        daily_quota_mb: { type: integer }
+        note: { type: string, maxLength: 200 }
+    LimitRule:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        kind: { type: string, enum: [speed, download] }
+        enabled: { type: boolean }
+        spec:
+          type: object
+          properties:
+            everyone: { type: boolean }
+            users: { type: array, items: { type: string } }
+            user_groups: { type: array, items: { type: integer } }
+            ip_groups: { type: array, items: { type: integer } }
+            scope: { type: string, enum: [each_user, each_client, shared], description: speed only }
+            rate_kbps: { type: integer, description: speed only }
+            burst_kb: { type: integer, description: "speed only; default is two seconds of traffic" }
+            max_mb: { type: integer, description: download only }
+    ImportReport:
+      type: object
+      properties:
+        dry_run: { type: boolean }
+        applied: { type: boolean }
+        created: { type: integer }
+        updated: { type: integer }
+        errors: { type: integer }
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              line: { type: integer }
+              username: { type: string }
+              action: { type: string, enum: [create, update, error] }
+              error: { type: string }
+security:
+  - session: []
+paths:
+  /health:
+    get:
+      summary: Liveness probe
+      x-role: public
+      security: []
+      responses: { "200": { description: '{"status":"ok"}' } }
+
+  # ------------------------------------------------------------------ session
+  /auth/login:
+    post:
+      summary: Sign in; sets the session cookie
+      description: Body `{username, password}`. Answers `401` for wrong credentials, `429` when locked out or rate limited.
+      x-role: public
+      security: []
+      responses: { "200": { description: "{user}" }, "401": { description: invalid credentials }, "429": { description: too many attempts } }
+  /auth/logout:
+    post:
+      summary: Sign out (ends the session)
+      x-role: any
+      responses: { "200": { description: ok } }
+  /auth/me:
+    get:
+      summary: The signed-in user and role
+      x-role: any
+      responses: { "200": { description: "{user}" } }
+  /auth/password:
+    put:
+      summary: Change your own password (ends your other sessions)
+      description: Body `{old_password, new_password}`. Allowed while a temporary password is still in force.
+      x-role: any
+      responses: { "200": { description: changed }, "422": { description: wrong current or weak new password } }
+  /auth/sessions:
+    get:
+      summary: Your active sessions
+      x-role: any
+      responses: { "200": { description: "{sessions}" } }
+  /auth/sessions/{id}:
+    delete:
+      summary: End one of your sessions
+      x-role: any
+      responses: { "200": { description: revoked } }
+
+  # -------------------------------------------------------------- panel admin
+  /panel/users:
+    get: { summary: List panel accounts, x-role: admin, responses: { "200": { description: "{users}" } } }
+    post: { summary: Create a panel account, description: "Body {username, password, role}; the user must change the password at first sign-in.", x-role: admin, responses: { "200": { description: created } } }
+  /panel/users/{id}:
+    put: { summary: Change role or disable a panel account (ends their sessions), x-role: admin, responses: { "200": { description: saved } } }
+    delete: { summary: Delete a panel account, x-role: admin, responses: { "200": { description: deleted } } }
+  /panel/users/{id}/password:
+    post: { summary: Set a temporary password for a panel account, x-role: admin, responses: { "200": { description: reset } } }
+  /audit:
+    get: { summary: The audit log (who changed what), description: "Query: limit, before_id, username.", x-role: admin, responses: { "200": { description: "{entries}" } } }
+
+  # ------------------------------------------------------------- squid service
+  /squid/status:
+    get: { summary: Whether squid is running, x-role: viewer, responses: { "200": { description: "{running, detail}" } } }
+  /squid/service:
+    get: { summary: Service state and version, x-role: viewer, responses: { "200": { description: service info } } }
+  /squid/service/{action}:
+    post:
+      summary: start, reload, stop, restart, enable or disable squid
+      description: Operators may start and reload; the others need admin (the handler enforces it).
+      x-role: operator
+      responses: { "200": { description: "{status, service}" }, "403": { description: role too low for this action } }
+  /squid/reconfigure:
+    post: { summary: Reload squid.conf (verified, rolled back on failure), x-role: operator, responses: { "200": { description: ok } } }
+  /squid/config:
+    get: { summary: The raw squid.conf, x-role: admin, responses: { "200": { description: "{content}" } } }
+    put: { summary: Replace squid.conf (validated with squid -k parse; history entry), x-role: admin, responses: { "200": { description: saved }, "422": { description: squid rejected the configuration } } }
+  /squid/history:
+    get: { summary: Saved configuration versions, x-role: admin, responses: { "200": { description: "{versions}" } } }
+  /squid/history/{id}:
+    get: { summary: One saved version with its content, x-role: admin, responses: { "200": { description: "{version}" } } }
+  /squid/history/{id}/restore:
+    post: { summary: Make an old version the current configuration, x-role: admin, responses: { "200": { description: restored } } }
+  /squid/settings:
+    get: { summary: Squid settings as form fields with current values, x-role: operator, responses: { "200": { description: "{settings, groups}" } } }
+    put:
+      summary: Change settings (or reset them to the stock line)
+      description: "Body `{values: {key: [..]}, reset: [key]}`. `?dry_run=1` reports the exact lines that would change."
+      x-role: admin
+      responses: { "200": { description: saved }, "422": { description: "invalid values, with per-field fields" } }
+  /squid/settings/restart:
+    post: { summary: Verified restart for settings that need one (cache_dir); rolls back if squid will not start, x-role: admin, responses: { "200": { description: restarted } } }
+  /squid/lan-access:
+    get: { summary: Whether LAN clients are allowed without login, x-role: viewer, responses: { "200": { description: state } } }
+    put: { summary: Allow or forbid LAN access, x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/logs/stream:
+    get:
+      summary: WebSocket with new access.log lines (live)
+      description: At most 20 viewers at once (503 beyond that). The socket closes with a reason when the log cannot be read.
+      x-role: operator
+      responses: { "101": { description: switching protocols }, "503": { description: too many viewers } }
+
+  # -------------------------------------------------------- blocking and rules
+  /squid/blacklist:
+    get: { summary: Blocked domains, x-role: viewer, responses: { "200": { description: "{domains}" } } }
+    post: { summary: Block a domain, x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/blacklist/{domain}:
+    delete: { summary: Unblock a domain, x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/restrictions:
+    get: { summary: Time-based restrictions, x-role: viewer, responses: { "200": { description: "{restrictions}" } } }
+    post: { summary: Add a time restriction, x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/restrictions/{id}:
+    delete: { summary: Remove a time restriction, x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/groups:
+    get: { summary: IP groups, x-role: viewer, responses: { "200": { description: "{groups}" } } }
+    post: { summary: Create an IP group, x-role: operator, responses: { "200": { description: "{group}" } } }
+  /squid/groups/{id}:
+    delete: { summary: Delete an IP group, x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/access/types:
+    get: { summary: ACL types the panel knows, x-role: viewer, responses: { "200": { description: "{types}" } } }
+  /squid/access/acls:
+    get: { summary: ACL objects, x-role: viewer, responses: { "200": { description: "{acls}" } } }
+    post: { summary: Create an ACL, x-role: operator, responses: { "200": { description: "{acl}" }, "422": { description: invalid } } }
+  /squid/access/acls/{id}:
+    put: { summary: Change an ACL, x-role: operator, responses: { "200": { description: "{acl}" } } }
+    delete: { summary: Delete an ACL (refused while a rule uses it), x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/access/rules:
+    get: { summary: Ordered access rules, x-role: viewer, responses: { "200": { description: "{rules}" } } }
+    post: { summary: Create a rule, x-role: operator, responses: { "200": { description: "{rule}" } } }
+  /squid/access/rules/{id}:
+    put: { summary: Change a rule, x-role: operator, responses: { "200": { description: "{rule}" } } }
+    delete: { summary: Delete a rule, x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/access/order:
+    put: { summary: Reorder rules, description: "Body {ids: [...]}, first has priority.", x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/access/policy:
+    get: { summary: "The effective http_access policy of the running configuration, with each rule's owner", x-role: viewer, responses: { "200": { description: "{rules, acls}" } } }
+  /squid/access/test:
+    post:
+      summary: Explain what squid would do with a request
+      description: Body `{src_ip, url, method, user, user_agent}`. Answers allow, deny or auth_required with a rule-by-rule trace.
+      x-role: operator
+      responses: { "200": { description: verdict } }
+  /squid/blocklists:
+    get: { summary: External block list sources, x-role: viewer, responses: { "200": { description: "{sources}" } } }
+    post: { summary: Add a source (downloaded on a schedule; private addresses refused), x-role: operator, responses: { "200": { description: "{source}" } } }
+  /squid/blocklists/{id}:
+    put: { summary: Change a source, x-role: operator, responses: { "200": { description: "{source}" } } }
+    delete: { summary: Delete a source, x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/blocklists/{id}/refresh:
+    post: { summary: Download the list now, x-role: operator, responses: { "200": { description: "{source}" } } }
+
+  # ------------------------------------------------ proxy accounts and limits
+  /squid/users:
+    get: { summary: Proxy user names (all roles), x-role: viewer, responses: { "200": { description: "{users: [name]}" } } }
+    post: { summary: Create a proxy user or change their password, description: "Body {username, password}; the first user turns proxy authentication on.", x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/users/{username}:
+    delete: { summary: Delete a proxy user with their settings and group memberships, x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/proxy-users:
+    get:
+      summary: Proxy accounts with state, expiry, quota, groups and today's usage
+      x-role: operator
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: object, properties: { users: { type: array, items: { $ref: "#/components/schemas/ProxyUser" } } } } } }
+  /squid/proxy-users/{username}:
+    put:
+      summary: Disable, expire, set a daily quota or a note
+      x-role: operator
+      requestBody: { content: { application/json: { schema: { $ref: "#/components/schemas/UserPatch" } } } }
+      responses: { "200": { description: ReloadResult }, "422": { description: invalid value or unknown account } }
+  /squid/proxy-users-export:
+    get: { summary: CSV of all accounts (no passwords; spreadsheet formulas are defused), x-role: operator, responses: { "200": { description: text/csv attachment } } }
+  /squid/proxy-users-import:
+    post:
+      summary: Import accounts from CSV (all or nothing)
+      description: |
+        Body is the CSV text (`Content-Type: text/csv`, at most 1 MB and 1000 rows). Columns: username (required),
+        password, disabled, expires (YYYY-MM-DD), daily_quota_mb, groups (`;` separated), note. `?dry_run=1` only
+        reports. One invalid row and nothing is applied (`422` with the report).
+      x-role: operator
+      responses:
+        "200": { description: "{report, reloaded}", content: { application/json: { schema: { type: object, properties: { report: { $ref: "#/components/schemas/ImportReport" } } } } } }
+        "422": { description: the file has errors; nothing was imported }
+  /squid/user-groups:
+    get: { summary: User groups with their members, x-role: operator, responses: { "200": { description: "{groups}" } } }
+    post: { summary: Create a user group, x-role: operator, responses: { "200": { description: "{group}" } } }
+  /squid/user-groups/{id}:
+    delete: { summary: Delete a user group, x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/user-groups/{id}/members:
+    put: { summary: Replace the members of a group, description: "Body {members: [username]}.", x-role: operator, responses: { "200": { description: ReloadResult } } }
+  /squid/limits:
+    get:
+      summary: Speed and download-size limits
+      x-role: operator
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: object, properties: { limits: { type: array, items: { $ref: "#/components/schemas/LimitRule" } } } } } }
+    post:
+      summary: Create a limit
+      x-role: operator
+      requestBody: { content: { application/json: { schema: { $ref: "#/components/schemas/LimitRule" } } } }
+      responses: { "200": { description: "{limit, reloaded}" }, "422": { description: invalid } }
+  /squid/limits/{id}:
+    put: { summary: Change a limit, x-role: operator, requestBody: { content: { application/json: { schema: { $ref: "#/components/schemas/LimitRule" } } } }, responses: { "200": { description: "{limit, reloaded}" } } }
+    delete: { summary: Delete a limit, x-role: operator, responses: { "200": { description: ReloadResult } } }
+
+  # ---------------------------------------------------------------- monitoring
+  /monitor/summary:
+    get: { summary: Totals and a timeline, description: "Query: range = 24h | 7d | 30d.", x-role: operator, responses: { "200": { description: summary } } }
+  /monitor/top:
+    get: { summary: Busiest domains, clients or users, description: "Query: range, by = domain|client|user, sort = requests|bytes|denied, limit (max 100).", x-role: operator, responses: { "200": { description: "{rows}" } } }
+  /monitor/denied:
+    get: { summary: Most recent refused requests, description: "Query: limit (max 500).", x-role: operator, responses: { "200": { description: "{rows}" } } }
+  /monitor/live:
+    get: { summary: "Squid's own numbers (cache manager), service state, log reader health and disks", x-role: operator, responses: { "200": { description: live data } } }
+  /monitor/logs:
+    get: { summary: Files in squid's log directory and disk usage, x-role: operator, responses: { "200": { description: "{dir, files, disks}" } } }
+  /monitor/logs/{name}:
+    get: { summary: The last lines of one log file (plain file names only), description: "Query: limit (max 1000).", x-role: operator, responses: { "200": { description: "{name, lines}" }, "400": { description: not a plain file name } } }
+  /monitor/logs/rotate:
+    post: { summary: squid -k rotate, x-role: admin, responses: { "200": { description: rotated } } }
+  /monitor/alerts:
+    get: { summary: "Alert settings (secrets shown only as set/not set), current state and history", x-role: admin, responses: { "200": { description: "{config, status, events}" } } }
+    put: { summary: Save alert settings; an empty secret keeps the stored one, x-role: admin, responses: { "200": { description: saved }, "422": { description: invalid, with fields } } }
+  /monitor/alerts/test:
+    post: { summary: Send a test message through every enabled channel, x-role: admin, responses: { "200": { description: "{results: {channel: ok|error}}" } } }
+  /monitor/alerts/check:
+    post: { summary: Evaluate all alert conditions now, x-role: admin, responses: { "200": { description: "{events, status}" } } }

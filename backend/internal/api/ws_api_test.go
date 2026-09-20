@@ -142,13 +142,16 @@ func TestLiveLogSocketRefusesBigClientFrames(t *testing.T) {
 	defer conn.Close()
 
 	// The stream never expects data from the browser, so a large frame is abuse.
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(strings.Repeat("x", 64<<10))); err != nil {
-		t.Fatal(err)
-	}
+	// The server may hang up while the client is still sending the big frame, so
+	// the write itself can fail with "connection reset": that is the refusal too.
+	writeErr := conn.WriteMessage(websocket.TextMessage, []byte(strings.Repeat("x", 64<<10)))
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, _, err = conn.ReadMessage()
 	ce, ok := err.(*websocket.CloseError)
-	if !ok || ce.Code != websocket.CloseMessageTooBig {
+	if writeErr == nil && (!ok || ce.Code != websocket.CloseMessageTooBig) {
 		t.Errorf("an oversized client frame must close the socket with 1009, got %v", err)
+	}
+	if writeErr != nil && err == nil {
+		t.Errorf("the write failed (%v) yet the socket still delivers messages", writeErr)
 	}
 }

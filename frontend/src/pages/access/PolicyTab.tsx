@@ -26,8 +26,9 @@ export default function PolicyTab({ version }: { version: number }) {
   const describe = (name: string) => {
     const a = acls[name];
     if (!a) return name;
-    const sample = a.args.slice(0, 8).join(", ");
-    return `${a.type}: ${sample}${a.args.length > 8 ? ` … (+${a.args.length - 8})` : ""}`;
+    const args = a.args ?? [];
+    const sample = args.slice(0, 8).join(", ");
+    return `${a.type}: ${sample}${args.length > 8 ? ` … (+${args.length - 8})` : ""}`;
   };
 
   return (

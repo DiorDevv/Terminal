@@ -166,11 +166,24 @@ tarixdan versiya tiklansa yoki fayl qo'lda tahrirlansa, panel Squid haqiqatda is
 - `ssl_bump`: CA generatsiyasi, sertifikatni qurilmalarga tarqatish, istisno ro'yxati
 - Transparent proxy yordamchisi (iptables/nftables qoidalari)
 
-### 8-bosqich — Deploy va sifat
-- Docker / docker-compose, bitta binar (frontend backend ichida), systemd o'rnatuvchi (qattiq yozilgan yo'llarsiz)
-- CI (vet, test, tsc, lint, build), handler va frontend testlari, Playwright E2E
-- Ildiz README, OpenAPI hujjati, i18n (uz/ru/en)
-- Ko'p serverli boshqaruv (agent arxitekturasi)
+### 8-bosqich — Deploy va sifat  (asosiy qismi bajarildi)
+**Nima qilindi**
+- **Bitta binar.** Veb-interfeys `go:embed` bilan Go binariga joylanadi (`internal/web`): panel o'zi tarqatadi, nginx/Vite/Node serverda kerak emas. SPA yo'nalishlari (`/stats` ...) ishlaydi, `assets/` bir yilga keshlanadi (nom xesh bilan), qolgani har safar tekshiriladi (ETag/304), mavjud bo'lmagan fayl 404 (HTML emas), noma'lum `/api/...` JSON 404, yo'l bosib o'tish (`..`) yopilgan
+- **Qat'iy Content-Security-Policy** (`default-src 'none'`, skript faqat o'zidan, WebSocket faqat shu host'ga, freymga solib bo'lmaydi). Haqiqiy Chrome'da CSP buzilishlari yo'qligi tekshirildi: kichik fayllar `data:` bo'lib joylashishi to'xtatildi (`assetsInlineLimit: 0`)
+- **Shriftlar paketga qo'shildi** (Inter, JetBrains Mono): endi panelni ochgan har kim Google'ga so'rov yubormaydi va internetsiz serverda ham to'g'ri ko'rinadi
+- `scripts/build.sh`: frontend + backend -> `bin/squidadmin-backend` (statik, cgo'siz, versiya belgisi bilan). `deploy/install.sh` uni ishlatadi (`--bin` bilan tayyor fayl ham bo'ladi; frontend faqat manba o'zgarganda qayta yig'iladi). Serverda Go/Node faqat yig'ish uchun kerak
+- **README.md** (o'zbekcha): o'rnatish (ikki yo'l), HTTPS (Caddy va nginx), barcha sozlamalar, zaxira/tiklash, yangilash/o'chirish, muammolar jadvali, xavfsizlik modeli, ishlab chiqish
+- **CI** (`.github/workflows/ci.yml`): gofmt, vet, test, govulncheck; tsc, oxlint, vitest, build, `npm audit`; bitta fayl yig'ish va artefakt. Dependabot (go, npm, actions). **GitHub'da hali ishga tushmagan**: sintaksisi va har bir qadamning mahalliy ekvivalenti tekshirilgan
+- **OpenAPI** (`docs/openapi.yaml`, 80 ta operatsiya) va **drift testi**: har bir route hujjatda bo'lishi shart, hujjatdagi har bir operatsiya mavjud bo'lishi shart, va hech bir operatsiya hujjatdagi roldan ochiqroq bo'lmasligi 79 ta real so'rov bilan tekshiriladi (mutatsion tekshiruv: 4/4)
+- **Frontend testlari** (vitest, 27 ta): sana o'zgartirish, formatlar, diff, kalit so'z -> regex. Test **haqiqiy nuqsonni topdi**: `keywordToPattern` faqat nuqtani himoyalardi, `c++` yoki `a|b` kabi kalit so'zlar noto'g'ri regex berardi; tuzatildi va real Squid'da qabul qilinishi tekshirildi
+
+- **Brauzer E2E (Playwright)** (`frontend/e2e/`, 14 fayl, 38 test): haqiqiy Chromium'da panelning har bir sahifasi va funksiyasi odam qilgandek bajariladi va **serverdagi natija** ham tekshiriladi (`squid.conf`, haqiqiy proksi orqali `curl`, webhook tinglovchisi). Har bir test brauzerni ham kuzatadi: skript xatosi, konsol xatosi yoki 5xx javob testni yiqitadi. Qamrov: kirish/parol majburiy almashtirish, navigatsiya, bloklangan domenlar, IP guruhlar va vaqt cheklovlari, proksi foydalanuvchilar (CSV, guruhlar, muddat/kvota), cheklovlar, statistika/loglar, panel foydalanuvchilar va rollar (viewer/operator/admin), Squid sozlamalari, xom config, tarix, audit, kirish qoidalari (ACL, qoida, shablon, tekshirgich), blocklist manbalari, ogohlantirishlar (haqiqiy uzilish + webhook), sozlamalar (parol, sessiyalar), dashboard (stop/start/restart/reconfigure, LAN). Ishga tushirish: `frontend/e2e/README.md`. **Topilgan va tuzatilgan:** "Samarali siyosat" varag'i bo'sh ACL'da (`args: null`) qulardi (backend endi `[]` beradi, frontend ham himoyalangan, regression testi bor)
+- **Ma'lum muammo (hal qilinmagan):** Dashboard'dagi "Tizim yoqilganda avtomatik ishga tushirish" kaliti `install.sh` o'rnatgan xizmatda 422 qaytaradi: `ProtectSystem=full` tufayli `/etc` faqat o'qish uchun, `systemctl enable squid` esa `/etc/systemd/system` va `/etc/rc*.d` ga yozadi. Yechim: xizmat faylidagi `ReadWritePaths` ga shu yo'llarni qo'shish (xavfsizlik qarori, egasi tasdiqlashi kerak) yoki kalitni olib tashlash. E2E'da `test.fixme` sifatida qayd etilgan
+
+**Ataylab qoldirildi**
+- **Docker / docker-compose:** panel Squid'ni `systemctl`/`squid -k` bilan boshqaradi, ya'ni Squid bilan bir mashinada (yoki bir konteynerda) bo'lishi kerak. Bitta konteynerli variant (Squid + panel, `SQUID_MANAGER=direct`) mumkin, lekin bu muhitda Docker yo'qligi uchun tekshirib bo'lmaydi; tekshirilmagan Dockerfile chiqarmaslik uchun keyinga qoldirildi
+- i18n (uz/ru/en), ko'p serverli boshqaruv (agent arxitekturasi)
+- Handler'lar uchun alohida unit testlar (API testlari va E2E orqali qoplangan)
 
 ## Tavsiya etilgan tartib
-1 → 2 → 3 → 4 → 5 → 6 → 8 → 7. (1–6 bajarildi, LDAP qoldi; keyingisi 8, keyin 7.) Har bosqich oxirida haqiqiy Squid'da (WSL) qo'lda va avtomatik tekshiriladi.
+1 → 2 → 3 → 4 → 5 → 6 → 8 → 7. (1–6 va 8-bosqichning asosi bajarildi; qolgan: 7 va 8-bosqichning "ataylab qoldirilgan"lari.) Har bosqich oxirida haqiqiy Squid'da (WSL) qo'lda va avtomatik tekshiriladi.
