@@ -186,4 +186,47 @@ tarixdan versiya tiklansa yoki fayl qo'lda tahrirlansa, panel Squid haqiqatda is
 - Handler'lar uchun alohida unit testlar (API testlari va E2E orqali qoplangan)
 
 ## Tavsiya etilgan tartib
-1 → 2 → 3 → 4 → 5 → 6 → 8 → 7. (1–6 va 8-bosqichning asosi bajarildi; qolgan: 7 va 8-bosqichning "ataylab qoldirilgan"lari.) Har bosqich oxirida haqiqiy Squid'da (WSL) qo'lda va avtomatik tekshiriladi.
+1 → 2 → 3 → 4 → 5 → 6 → 8 → 7. (1–6 va 8-bosqich asosi bajarildi; qolgani quyidagi "Keyingi ishlar reja"da.) Har bosqich oxirida haqiqiy Squid'da (WSL) qo'lda va avtomatik tekshiriladi.
+
+## Keyingi ishlar reja (2026-09-20 holati, ertaga shu yerdan davom etamiz)
+
+**Holat:** 1–6-bosqich, audit, 8-bosqich asosi va brauzer E2E (14 fayl, 38 test) bajarilgan, hammasi GitHub'da (`main`). CI (Go, frontend, bitta fayl yig'ish) yashil. Hozirgi ma'lum nosozlik faqat bitta (A.1).
+
+### A. Avval yopiladigan narsalar
+1. **"Tizim yoqilganda avtomatik ishga tushirish" kaliti** (Dashboard) `install.sh` o'rnatgan xizmatda 422 beradi: `ProtectSystem=full` `/etc` ni yozishdan himoyalaydi, `systemctl enable squid` esa `/etc/systemd/system` va `/etc/rc*.d` ga symlink yozadi. **Qaror kerak (egasi):**
+   - (tavsiya) `deploy/install.sh` dagi `ReadWritePaths` ga `/etc/systemd/system -/etc/rc0.d ... -/etc/rcS.d` qo'shish. Faqat sudo bilan ruxsat berilgan root buyruqlari uchun yo'l ochiladi, panel jarayonining o'ziga yangi huquq bermaydi; yoki
+   - kalitni paneldan olib tashlash.
+   Tuzatgach: `e2e/14-dashboard.spec.ts` dagi `test.fixme` ni oddiy `test` ga aylantirish va qayta yurgizish.
+2. Git muallifini sozlash (`git config --global user.name/user.email`); hozircha commitlar `DiorDevv` nomidan `-c` bilan qilingan.
+3. Dependabot 6 ta PR ochgan (actions va npm yangilanishlari): CI yashil bo'lganlarini ko'rib chiqib qo'shish (major versiyalarda changelog o'qish).
+
+### B. Real serverda sinov (1–2 hafta, eng muhim)
+- Toza Ubuntu/Debian serverga `sudo ./deploy/install.sh --bin bin/squidadmin-backend` (boshqa distributivda o'rnatish, Squid paketi nomi/yo'llari farqi).
+- 5–10 kishilik haqiqiy trafik: katta `access.log` bilan statistika tezligi, blocklist bilan `reconfigure` paytidagi uzilish (hozir bir necha soniya), xotira/CPU.
+- Brauzer E2E'ni shu serverga qarshi yurgizish (`BASE_URL`, `E2E_ADMIN_PW`); Firefox/WebKit loyihalarini qo'shish.
+- Telegram va SMTP kanallarini haqiqiy hisob bilan bir marta sinash (hozircha faqat soxta serverga qarshi).
+- Yangi tashqi blocklist qo'shishni haqiqiy ro'yxat bilan qayta tekshirish.
+
+### C. Xavfsizlik qarzlari (7-bosqichdan oldin)
+- Sirlarni (Telegram tokeni, SMTP paroli, webhook manzili) bazada shifrlash: `/etc/squidadmin/env` dagi master kalit bilan.
+- TOTP 2FA (kamida admin uchun) + tiklash kodlari.
+- Zaxira: bazani va config tarixini paneldan yuklab olish/tiklash.
+- Ogohlantirish hisoblagichlarini bazaga yozish (hozir xotirada, qayta ishga tushganda nolga tushadi).
+- Sirlarni API orqali tozalash imkoniyati (hozir o'zgartirish mumkin, o'chirish mumkin emas).
+- Config tarixi hajmi (siqish/eski versiyalarni tozalash).
+
+### D. 7-bosqich: HTTPS va ilg'or (C dan keyin)
+- `ssl_bump`: CA yaratish, sertifikatni qurilmalarga tarqatish sahifasi, istisno ro'yxati (bank/tibbiyot saytlari bump qilinmasin), huquqiy ogohlantirish matni.
+- Shaffof proksi yordamchisi (iptables/nftables): avval "ko'rish rejimi" (nima qo'shiladi), keyin qo'llash, uzilib qolsa avtomatik qaytarish (noto'g'ri qoida serverni tarmoqdan uzib qo'yadi).
+- Sinov: haqiqiy Squid + `curl --proxy-cacert`, E2E `phase7.py`.
+
+### E. Keyinroq / hozircha kerak emas
+- Docker (`SQUID_MANAGER=direct`, panel Squid bilan bir konteynerda; Docker bor muhitda tekshirish shart), LDAP/AD (haqiqiy katalog kerak), i18n (uz/ru/en), ko'p serverli boshqaruv (agent), `refresh_pattern` (kesh sozlash), foydalanuvchi guruhlarini kirish qoidalarida ishlatish, qoidalarni sudrab tartiblash (hozir yuqoriga/pastga tugma), handler'lar uchun alohida unit testlar, Squid o'rnatish ustasi va kesh tozalash.
+
+### Ertaga boshlash tartibi
+1. A.1 bo'yicha qaror (yuqoridagi tavsiya) → tuzatish → `14-dashboard` da `fixme` ni olib tashlash.
+2. A.3 Dependabot PR'larini ko'rish.
+3. B: real serverga o'rnatish rejasi (qaysi server/VM borligini aniqlash).
+4. C: sirlarni shifrlash va 2FA dan boshlash.
+
+**E2E ishga tushirish eslatmasi:** `frontend/e2e/README.md`. `01-auth` admin birinchi ishga tushirish holatida bo'lishini talab qiladi (dev serverda hozir shunday); bir martalik parol `E2E_ADMIN_PW` bilan beriladi (repoda saqlanmaydi).
