@@ -9,8 +9,16 @@ import (
 )
 
 type UsersHandler struct {
-	users *squid.UserManager
-	mgr   *squid.Manager
+	users  *squid.UserManager
+	mgr    *squid.Manager
+	policy *squid.UserPolicy
+}
+
+// WithPolicy makes deleting an account also drop its settings, group
+// memberships and its place in the limits.
+func (h *UsersHandler) WithPolicy(p *squid.UserPolicy) *UsersHandler {
+	h.policy = p
+	return h
 }
 
 func NewUsersHandler(users *squid.UserManager, mgr *squid.Manager) *UsersHandler {
@@ -65,6 +73,11 @@ func (h *UsersHandler) Remove(c *gin.Context) {
 	if err := h.users.RemoveUser(username); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 		return
+	}
+	if h.policy != nil {
+		if _, err := h.policy.Forget(username); err != nil {
+			c.Error(err) // the account is gone; a stale setting is corrected on the next sync
+		}
 	}
 
 	resp := gin.H{"status": "saved", "reloaded": true}

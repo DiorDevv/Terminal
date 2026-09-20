@@ -13,7 +13,7 @@ export function PageHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="mb-7 flex items-start justify-between gap-4">
+    <div className="mb-7 flex flex-wrap items-start justify-between gap-4">
       <div className="flex items-start gap-3.5">
         <IconBadge size={40}>{icon}</IconBadge>
         <div>

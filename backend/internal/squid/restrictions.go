@@ -78,7 +78,7 @@ func (m *RestrictionManager) List() ([]Restriction, error) {
 	}
 	defer rows.Close()
 
-	var out []Restriction
+	out := []Restriction{}
 	for rows.Next() {
 		var r Restriction
 		var domainsJSON, daysJSON, exemptJSON string
@@ -157,21 +157,14 @@ const (
 // writes it back into squid.conf, replacing any previous version of the
 // block. It's called after every create/delete so squid.conf always
 // reflects exactly what's in the database.
+//
+// The block is placed before the first http_access "allow" rule. squid stops
+// at the first matching rule, so a deny placed after "allow localhost" or
+// "allow <authenticated users>" would never fire for those clients.
 func (m *RestrictionManager) Regenerate() error {
 	restrictions, err := m.List()
 	if err != nil {
 		return err
-	}
-
-	content, err := m.confMgr.ReadConfig()
-	if err != nil {
-		return err
-	}
-
-	lines := stripManagedBlock(strings.Split(content, "\n"), restrictionBlockStart, restrictionBlockEnd)
-
-	if len(restrictions) == 0 {
-		return m.confMgr.WriteConfig(strings.Join(lines, "\n"))
 	}
 
 	groups := NewGroupManager(m.db)
@@ -201,20 +194,14 @@ func (m *RestrictionManager) Regenerate() error {
 	}
 	block = append(block, restrictionBlockEnd)
 
-	var out []string
-	inserted := false
-	for _, line := range lines {
-		if !inserted && strings.TrimSpace(line) == "http_access deny all" {
-			out = append(out, block...)
-			inserted = true
-		}
-		out = append(out, line)
-	}
-	if !inserted {
-		out = append(out, block...)
-	}
+	return m.confMgr.Update("time restrictions regenerated", func(content string) (string, error) {
+		lines := stripManagedBlock(strings.Split(content, "\n"), restrictionBlockStart, restrictionBlockEnd)
 
-	return m.confMgr.WriteConfig(strings.Join(out, "\n"))
+		if len(restrictions) > 0 {
+			lines = insertAt(lines, denyStageAnchor(lines), block)
+		}
+		return strings.Join(lines, "\n"), nil
+	})
 }
 
 // stripManagedBlock removes a previously inserted [start, end] marker block

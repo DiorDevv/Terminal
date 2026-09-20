@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 )
 
 // BlacklistManager manages the plain-text domain list that squid.conf's
@@ -14,6 +15,9 @@ type BlacklistManager struct {
 	Path    string
 	ACLName string
 	confMgr *Manager
+
+	// mu serialises read-modify-write of the list file.
+	mu sync.Mutex
 }
 
 func NewBlacklistManager(path, aclName string, confMgr *Manager) *BlacklistManager {
@@ -41,6 +45,12 @@ func normalizeDomain(input string) (string, error) {
 }
 
 func (b *BlacklistManager) ListDomains() ([]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.listDomains()
+}
+
+func (b *BlacklistManager) listDomains() ([]string, error) {
 	f, err := os.Open(b.Path)
 	if os.IsNotExist(err) {
 		return []string{}, nil
@@ -50,7 +60,7 @@ func (b *BlacklistManager) ListDomains() ([]string, error) {
 	}
 	defer f.Close()
 
-	var domains []string
+	domains := []string{}
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -72,7 +82,10 @@ func (b *BlacklistManager) AddDomain(input string) error {
 		return err
 	}
 
-	existing, err := b.ListDomains()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	existing, err := b.listDomains()
 	if err != nil {
 		return err
 	}
@@ -101,7 +114,10 @@ func (b *BlacklistManager) RemoveDomain(input string) error {
 		return err
 	}
 
-	existing, err := b.ListDomains()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	existing, err := b.listDomains()
 	if err != nil {
 		return err
 	}
@@ -118,7 +134,7 @@ func (b *BlacklistManager) RemoveDomain(input string) error {
 		content += "\n"
 	}
 
-	if err := os.WriteFile(b.Path, []byte(content), 0o644); err != nil {
+	if err := writeFileAtomic(b.Path, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write blacklist: %w", err)
 	}
 
@@ -132,46 +148,26 @@ func (b *BlacklistManager) RemoveDomain(input string) error {
 // permission) are returned so the caller can log and continue rather than
 // crash startup.
 func (b *BlacklistManager) EnsureDirectives() error {
-	content, err := b.confMgr.ReadConfig()
-	if err != nil {
-		return err
-	}
-
 	aclLine := fmt.Sprintf(`acl %s dstdomain "%s"`, b.ACLName, b.Path)
 	denyLine := fmt.Sprintf("http_access deny %s", b.ACLName)
 
-	hasACL := strings.Contains(content, aclLine)
-	hasDeny := strings.Contains(content, denyLine)
-	if hasACL && hasDeny {
-		return nil
-	}
-
-	lines := strings.Split(content, "\n")
-	var out []string
-	aclInserted := hasACL
-	denyInserted := hasDeny
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if !denyInserted && strings.HasPrefix(trimmed, "http_access allow") {
-			if !aclInserted {
-				out = append(out, aclLine)
-				aclInserted = true
-			}
-			out = append(out, denyLine)
-			denyInserted = true
+	return b.confMgr.Update("blacklist directives added", func(content string) (string, error) {
+		hasACL := strings.Contains(content, aclLine)
+		hasDeny := strings.Contains(content, denyLine)
+		if hasACL && hasDeny {
+			return content, nil
 		}
 
-		out = append(out, line)
-	}
+		var block []string
+		if !hasACL {
+			block = append(block, aclLine)
+		}
+		if !hasDeny {
+			block = append(block, denyLine)
+		}
 
-	if !aclInserted {
-		out = append([]string{aclLine}, out...)
-	}
-	if !denyInserted {
-		out = append(out, denyLine)
-	}
-
-	return b.confMgr.WriteConfig(strings.Join(out, "\n"))
+		lines := strings.Split(content, "\n")
+		lines = insertAt(lines, denyStageAnchor(lines), block)
+		return strings.Join(lines, "\n"), nil
+	})
 }

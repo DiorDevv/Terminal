@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // UserManager manages Squid proxy users: an htpasswd-format credentials
@@ -18,6 +19,9 @@ type UserManager struct {
 	HelperPath  string
 	HtpasswdBin string
 	confMgr     *Manager
+
+	// mu serialises htpasswd runs, which rewrite the whole passwd file.
+	mu sync.Mutex
 }
 
 func NewUserManager(passwdPath, aclName, helperPath, htpasswdBin string, confMgr *Manager) *UserManager {
@@ -78,13 +82,19 @@ func (u *UserManager) AddUser(username, password string) error {
 		return fmt.Errorf("password must be at least 4 characters")
 	}
 
-	args := []string{"-b"}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	// -i reads the password from stdin, so it never appears in the process
+	// list (unlike -b, which takes it as a command-line argument).
+	args := []string{"-i"}
 	if _, err := os.Stat(u.PasswdPath); os.IsNotExist(err) {
 		args = append(args, "-c")
 	}
-	args = append(args, u.PasswdPath, username, password)
+	args = append(args, u.PasswdPath, username)
 
 	cmd := exec.Command(u.HtpasswdBin, args...)
+	cmd.Stdin = strings.NewReader(password + "\n")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("htpasswd failed: %s", string(out))
@@ -97,6 +107,9 @@ func (u *UserManager) RemoveUser(username string) error {
 	if err := validateUsername(username); err != nil {
 		return err
 	}
+
+	u.mu.Lock()
+	defer u.mu.Unlock()
 
 	if _, err := os.Stat(u.PasswdPath); os.IsNotExist(err) {
 		return nil
@@ -116,15 +129,7 @@ func (u *UserManager) RemoveUser(username string) error {
 // existing "allow localhost" rules keep working unauthenticated). It's
 // idempotent and best-effort, like BlacklistManager.EnsureDirectives.
 func (u *UserManager) EnsureAuthDirectives() error {
-	content, err := u.confMgr.ReadConfig()
-	if err != nil {
-		return err
-	}
-
 	marker := "# --- squidadmin: proxy authentication ---"
-	if strings.Contains(content, marker) {
-		return nil
-	}
 
 	block := []string{
 		marker,
@@ -136,20 +141,13 @@ func (u *UserManager) EnsureAuthDirectives() error {
 		"# --- end squidadmin ---",
 	}
 
-	lines := strings.Split(content, "\n")
-	var out []string
-	inserted := false
-	for _, line := range lines {
-		if !inserted && strings.TrimSpace(line) == "http_access deny all" {
-			out = append(out, block...)
-			inserted = true
+	return u.confMgr.Update("proxy authentication enabled", func(content string) (string, error) {
+		if strings.Contains(content, marker) {
+			return content, nil
 		}
-		out = append(out, line)
-	}
 
-	if !inserted {
-		out = append(out, block...)
-	}
-
-	return u.confMgr.WriteConfig(strings.Join(out, "\n"))
+		lines := strings.Split(content, "\n")
+		lines = insertAt(lines, beforeFinalDenyAll(lines), block)
+		return strings.Join(lines, "\n"), nil
+	})
 }

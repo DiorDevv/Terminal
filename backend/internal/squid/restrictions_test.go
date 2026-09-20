@@ -120,6 +120,86 @@ func TestRestrictionCreateListDelete(t *testing.T) {
 	}
 }
 
+// squid stops at the first matching http_access rule, so a restriction placed
+// after "allow localhost" / "allow localnet" / "allow <authenticated users>"
+// never fires for those clients. The generated deny must precede every allow.
+func TestRestrictionBlockPrecedesAllowRules(t *testing.T) {
+	dir := t.TempDir()
+	confPath := filepath.Join(dir, "squid.conf")
+	initial := strings.Join([]string{
+		"http_access deny !Safe_ports",
+		"http_access allow localnet",
+		"http_access allow localhost",
+		"# --- squidadmin: proxy authentication ---",
+		"http_access allow authenticated_users",
+		"# --- end squidadmin ---",
+		"http_access deny all",
+		"",
+	}, "\n")
+	if err := os.WriteFile(confPath, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	confMgr := NewManager(confPath, "true")
+	rm := NewRestrictionManager(newTestRestrictionDB(t), confMgr)
+
+	if _, err := rm.Create(Restriction{
+		Name: "worktime_block", Domains: []string{"youtube.com"},
+		Days: []string{"M"}, StartTime: "09:00", EndTime: "18:00",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	content, _ := confMgr.ReadConfig()
+	block := strings.Index(content, restrictionBlockStart)
+	for _, allow := range []string{
+		"http_access allow localnet",
+		"http_access allow localhost",
+		"http_access allow authenticated_users",
+	} {
+		idx := strings.Index(content, allow)
+		if block == -1 || idx == -1 || block > idx {
+			t.Fatalf("restriction block must come before %q, got:\n%s", allow, content)
+		}
+	}
+}
+
+// Blocks written by older versions sat after the allow rules; Regenerate must
+// pull them into the right place rather than leave a duplicate behind.
+func TestRegenerateMigratesMisplacedBlock(t *testing.T) {
+	dir := t.TempDir()
+	confPath := filepath.Join(dir, "squid.conf")
+	old := strings.Join([]string{
+		"http_access allow localhost",
+		restrictionBlockStart,
+		"acl sqa_r1_domains dstdomain .youtube.com",
+		"acl sqa_r1_time time M 09:00-18:00",
+		"http_access deny sqa_r1_domains sqa_r1_time",
+		restrictionBlockEnd,
+		"http_access deny all",
+		"",
+	}, "\n")
+	os.WriteFile(confPath, []byte(old), 0o644)
+
+	confMgr := NewManager(confPath, "true")
+	db := newTestRestrictionDB(t)
+	db.Exec(`INSERT INTO time_restrictions (id, name, domains, days, start_time, end_time, exempt_cidrs)
+		VALUES (1, 'worktime_block', '[".youtube.com"]', '["M"]', '09:00', '18:00', '[]')`)
+	rm := NewRestrictionManager(db, confMgr)
+
+	if err := rm.Regenerate(); err != nil {
+		t.Fatalf("Regenerate: %v", err)
+	}
+
+	content, _ := confMgr.ReadConfig()
+	if strings.Count(content, restrictionBlockStart) != 1 {
+		t.Fatalf("expected exactly one managed block, got:\n%s", content)
+	}
+	if strings.Index(content, restrictionBlockStart) > strings.Index(content, "http_access allow localhost") {
+		t.Fatalf("block should have moved before 'allow localhost', got:\n%s", content)
+	}
+}
+
 func TestRestrictionValidation(t *testing.T) {
 	dir := t.TempDir()
 	confPath := filepath.Join(dir, "squid.conf")

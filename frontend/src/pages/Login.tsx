@@ -18,10 +18,15 @@ export default function Login() {
     setError("");
     setLoading(true);
     try {
-      await login(username, password);
-      navigate("/", { replace: true });
-    } catch {
-      setError("Login yoki parol noto'g'ri");
+      const user = await login(username, password);
+      navigate(user.must_change_password ? "/change-password" : "/", { replace: true });
+    } catch (err) {
+      const status = (err as { response?: { status?: number } }).response?.status;
+      setError(
+        status === 429
+          ? "Juda ko'p urinish. Bir necha daqiqadan keyin qayta urinib ko'ring."
+          : "Login yoki parol noto'g'ri",
+      );
     } finally {
       setLoading(false);
     }
@@ -49,6 +54,7 @@ export default function Login() {
             className="mb-4"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
+            autoComplete="username"
             autoFocus
           />
 
@@ -58,6 +64,7 @@ export default function Login() {
             className="mb-5"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
           />
 
           {error && (

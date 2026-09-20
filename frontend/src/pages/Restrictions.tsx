@@ -8,6 +8,7 @@ import { Input, Label, Select } from "../components/ui/Input";
 import { PageHeader } from "../components/ui/PageHeader";
 import { ListSkeleton } from "../components/ui/Skeleton";
 import { api } from "../lib/api";
+import { notifyResult, type ReloadResult } from "../lib/reload";
 import { useToast } from "../lib/toast";
 
 interface Restriction {
@@ -88,7 +89,7 @@ export default function Restrictions() {
 
     setBusy(true);
     try {
-      await api.post("/squid/restrictions", {
+      const res = await api.post<ReloadResult>("/squid/restrictions", {
         name: name.trim(),
         domains: domains.split(",").map((d) => d.trim()).filter(Boolean),
         days,
@@ -103,7 +104,7 @@ export default function Restrictions() {
                 .filter(Boolean),
             }),
       });
-      toast.success(`"${name.trim()}" qoidasi yaratildi`);
+      notifyResult(toast, res.data, `"${name.trim()}" qoidasi yaratildi`);
       setName("");
       setDomains("");
       setDays([]);
@@ -126,8 +127,8 @@ export default function Restrictions() {
 
     setBusy(true);
     try {
-      await api.delete(`/squid/restrictions/${item.id}`);
-      toast.success(`"${item.name}" o'chirildi`);
+      const res = await api.delete<ReloadResult>(`/squid/restrictions/${item.id}`);
+      notifyResult(toast, res.data, `"${item.name}" o'chirildi`);
       await load();
     } catch (err: any) {
       toast.error(err.response?.data?.error ?? "O'chirib bo'lmadi");

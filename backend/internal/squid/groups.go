@@ -31,7 +31,7 @@ func (g *GroupManager) List() ([]Group, error) {
 	}
 	defer rows.Close()
 
-	var out []Group
+	out := []Group{}
 	for rows.Next() {
 		var group Group
 		var membersJSON string

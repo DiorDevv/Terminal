@@ -8,6 +8,7 @@ import { Input } from "../components/ui/Input";
 import { ListSkeleton } from "../components/ui/Skeleton";
 import { PageHeader } from "../components/ui/PageHeader";
 import { api } from "../lib/api";
+import { notifyResult, type ReloadResult } from "../lib/reload";
 import { useToast } from "../lib/toast";
 
 export default function Blacklist() {
@@ -35,8 +36,8 @@ export default function Blacklist() {
     if (!input.trim()) return;
     setBusy(true);
     try {
-      await api.post("/squid/blacklist", { domain: input.trim() });
-      toast.success(`${input.trim()} bloklandi`);
+      const res = await api.post<ReloadResult>("/squid/blacklist", { domain: input.trim() });
+      notifyResult(toast, res.data, `${input.trim()} bloklandi`);
       setInput("");
       await load();
     } catch (err: any) {
@@ -55,8 +56,10 @@ export default function Blacklist() {
 
     setBusy(true);
     try {
-      await api.delete(`/squid/blacklist/${encodeURIComponent(domain.replace(/^\./, ""))}`);
-      toast.success(`${domain} bloklamadan olib tashlandi`);
+      const res = await api.delete<ReloadResult>(
+        `/squid/blacklist/${encodeURIComponent(domain.replace(/^\./, ""))}`,
+      );
+      notifyResult(toast, res.data, `${domain} bloklamadan olib tashlandi`);
       await load();
     } catch (err: any) {
       toast.error(err.response?.data?.error ?? "O'chirib bo'lmadi");

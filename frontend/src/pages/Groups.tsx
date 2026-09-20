@@ -8,6 +8,7 @@ import { Input } from "../components/ui/Input";
 import { PageHeader } from "../components/ui/PageHeader";
 import { ListSkeleton } from "../components/ui/Skeleton";
 import { api } from "../lib/api";
+import { notifyResult, type ReloadResult } from "../lib/reload";
 import { useToast } from "../lib/toast";
 
 interface Group {
@@ -66,8 +67,8 @@ export default function Groups() {
 
     setBusy(true);
     try {
-      await api.delete(`/squid/groups/${group.id}`);
-      toast.success(`"${group.name}" o'chirildi`);
+      const res = await api.delete<ReloadResult>(`/squid/groups/${group.id}`);
+      notifyResult(toast, res.data, `"${group.name}" o'chirildi`);
       await load();
     } catch (err: any) {
       toast.error(err.response?.data?.error ?? "O'chirib bo'lmadi");

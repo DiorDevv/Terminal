@@ -26,47 +26,37 @@ func (m *Manager) IsLANAllowed() (bool, error) {
 // out by default in stock squid.conf), or appending it before the final
 // deny-all if it's missing entirely.
 func (m *Manager) SetLANAllowed(allowed bool) error {
-	content, err := m.ReadConfig()
-	if err != nil {
-		return err
+	comment := "LAN access disabled"
+	if allowed {
+		comment = "LAN access enabled"
 	}
 
-	lines := strings.Split(content, "\n")
-	found := false
+	return m.Update(comment, func(content string) (string, error) {
+		lines := strings.Split(content, "\n")
+		found := false
 
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == lanAccessDirective {
-			found = true
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == lanAccessDirective {
+				found = true
+				if !allowed {
+					lines[i] = "# " + lanAccessDirective
+				}
+			} else if trimmed == "# "+lanAccessDirective || trimmed == "#"+lanAccessDirective {
+				found = true
+				if allowed {
+					lines[i] = lanAccessDirective
+				}
+			}
+		}
+
+		if !found {
 			if !allowed {
-				lines[i] = "# " + lanAccessDirective
+				return content, nil // nothing to do, already effectively disabled
 			}
-		} else if trimmed == "# "+lanAccessDirective || trimmed == "#"+lanAccessDirective {
-			found = true
-			if allowed {
-				lines[i] = lanAccessDirective
-			}
+			lines = insertAt(lines, beforeFinalDenyAll(lines), []string{lanAccessDirective})
 		}
-	}
 
-	if !found {
-		if !allowed {
-			return nil // nothing to do, already effectively disabled
-		}
-		var out []string
-		inserted := false
-		for _, line := range lines {
-			if !inserted && strings.TrimSpace(line) == "http_access deny all" {
-				out = append(out, lanAccessDirective)
-				inserted = true
-			}
-			out = append(out, line)
-		}
-		if !inserted {
-			out = append(out, lanAccessDirective)
-		}
-		lines = out
-	}
-
-	return m.WriteConfig(strings.Join(lines, "\n"))
+		return strings.Join(lines, "\n"), nil
+	})
 }

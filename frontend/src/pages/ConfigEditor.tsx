@@ -24,10 +24,21 @@ export default function ConfigEditor() {
   async function save() {
     setSaving(true);
     try {
+      // The backend validates before writing, so a syntax error never reaches
+      // squid.conf. Reconfigure then applies it and rolls back automatically
+      // if squid can't run with it.
       await api.put("/squid/config", { content });
-      toast.success("squid.conf saqlandi va tekshirildi");
     } catch (err: any) {
       toast.error(err.response?.data?.error ?? "Saqlashda xatolik");
+      setSaving(false);
+      return;
+    }
+
+    try {
+      await api.post("/squid/reconfigure");
+      toast.success("squid.conf saqlandi, tekshirildi va qo'llandi");
+    } catch (err: any) {
+      toast.error(err.response?.data?.error ?? "Saqlandi, lekin Squid qayta yuklanmadi");
     } finally {
       setSaving(false);
     }
@@ -53,7 +64,7 @@ export default function ConfigEditor() {
           />
 
           <Button onClick={save} disabled={saving} icon={<Save size={15} />}>
-            {saving ? "Saqlanmoqda..." : "Saqlash va tekshirish"}
+            {saving ? "Tekshirilmoqda..." : "Saqlash va qo'llash"}
           </Button>
         </>
       )}
